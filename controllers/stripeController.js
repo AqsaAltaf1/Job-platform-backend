@@ -177,6 +177,7 @@ export const handleStripeWebhook = async (req, res) => {
     
     let event;
     try {
+      // req.body is already the raw buffer due to express.raw() middleware
       event = getStripe().webhooks.constructEvent(req.body, sig, endpointSecret);
     } catch (err) {
       console.error('Webhook signature verification failed:', err.message);

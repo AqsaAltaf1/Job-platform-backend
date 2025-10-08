@@ -352,16 +352,27 @@ export const handleStripeWebhook = async (req, res) => {
     const sig = req.headers['stripe-signature'];
     const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
+    console.log('🔍 Webhook Debug Info:');
+    console.log('- Signature header:', sig ? 'Present' : 'Missing');
+    console.log('- Webhook secret:', endpointSecret ? 'Configured' : 'Missing');
+    console.log('- Body type:', typeof req.body);
+    console.log('- Body length:', req.body ? req.body.length : 'No body');
+
     if (!endpointSecret) {
       console.error('Stripe webhook secret not configured');
       return res.status(400).send('Webhook Error: No webhook secret configured');
     }
 
+    if (!sig) {
+      console.error('Stripe signature header missing');
+      return res.status(400).send('Webhook Error: No signature header');
+    }
+
     let event;
     try {
       // Use raw body for signature verification
-      const body = req.rawBody || req.body;
-      event = stripeServiceModule.getInstance().stripe.webhooks.constructEvent(body, sig, endpointSecret);
+      // req.body is already the raw buffer due to express.raw() middleware
+      event = stripeServiceModule.getInstance().stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
     } catch (err) {
       console.error('Webhook signature verification failed:', err.message);
       return res.status(400).send(`Webhook Error: ${err.message}`);
