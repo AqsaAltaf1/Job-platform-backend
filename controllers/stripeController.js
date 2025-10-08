@@ -421,12 +421,14 @@ const handlePlanCreate = async (planData) => {
         const billingCycle = billingCycleMap[price.interval] || 'monthly';
         
         // Create new plan in database
-        const newPlan = await SubscriptionPlan.create({
+        const priceAmount = parseFloat(price.amount) / 100; // Convert from cents to dollars
+        
+        const planData = {
           name: product.name,
           display_name: product.name, // Use product name as display name
           description: product.description || '',
           billing_cycle: billingCycle,
-          price: parseFloat(price.amount) / 100, // Convert from cents to dollars
+          price: priceAmount,
           stripe_price_id: price.id,
           stripe_product_id: product.id,
           is_active: product.active,
@@ -436,7 +438,18 @@ const handlePlanCreate = async (planData) => {
             max_applications: parseInt(product.metadata?.max_applications) || 0,
             max_team_members: parseInt(product.metadata?.max_team_members) || 0
           }
-        });
+        };
+        
+        // Set the appropriate price field based on billing cycle
+        if (billingCycle === 'monthly') {
+          planData.price_monthly = priceAmount;
+          planData.stripe_price_id_monthly = price.id;
+        } else if (billingCycle === 'yearly') {
+          planData.price_yearly = priceAmount;
+          planData.stripe_price_id_yearly = price.id;
+        }
+        
+        const newPlan = await SubscriptionPlan.create(planData);
         console.log(`✅ Created new plan in database: ${newPlan.name} (${price.id})`);
       } else {
         console.log(`⚠️ Plan already exists in database: ${price.id}`);
