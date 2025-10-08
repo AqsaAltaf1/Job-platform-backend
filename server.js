@@ -256,8 +256,14 @@ const PORT = process.env.PORT || 5001;
 
 // Middleware
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true
+  origin: [
+    process.env.FRONTEND_URL || 'http://localhost:3000',
+    'https://job-platform-zsyc-kvxkwi10c-aqsaaltafs-projects.vercel.app',
+    'https://job-platform-zsyc.vercel.app' // Main Vercel URL
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 // Raw body parser for Stripe webhooks
