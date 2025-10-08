@@ -1,5 +1,10 @@
 import dotenv from 'dotenv';
-dotenv.config({ path: './config.env' });
+// Try to load from config.env first, then fall back to .env
+try {
+  dotenv.config({ path: './config.env' });
+} catch (error) {
+  dotenv.config();
+}
 
 import express from 'express';
 import cors from 'cors';
