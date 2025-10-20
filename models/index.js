@@ -25,6 +25,9 @@ import { Achievement } from './Achievement.js';
 import { NarrativeSection } from './NarrativeSection.js';
 import { PortfolioItem } from './PortfolioItem.js';
 import { WorkSample } from './WorkSample.js';
+import Notification from './Notification.js';
+import Reference from './Reference.js';
+import ReferenceInvitation from './ReferenceInvitation.js';
 
 // Define associations
 User.hasOne(EmployerProfile, { foreignKey: 'user_id', as: 'employerProfile' });
@@ -138,6 +141,20 @@ PortfolioItem.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 User.hasMany(WorkSample, { foreignKey: 'user_id', as: 'workSamples' });
 WorkSample.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 
+// Notification associations
+User.hasMany(Notification, { foreignKey: 'user_id', as: 'notifications' });
+Notification.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+
+// Reference associations
+User.hasMany(Reference, { foreignKey: 'candidate_id', as: 'references' });
+Reference.belongsTo(User, { foreignKey: 'candidate_id', as: 'candidate' });
+
+User.hasMany(ReferenceInvitation, { foreignKey: 'candidate_id', as: 'referenceInvitations' });
+ReferenceInvitation.belongsTo(User, { foreignKey: 'candidate_id', as: 'candidate' });
+
+ReferenceInvitation.hasOne(Reference, { foreignKey: 'invitation_id', as: 'reference' });
+Reference.belongsTo(ReferenceInvitation, { foreignKey: 'invitation_id', as: 'invitation' });
+
 export {
   sequelize,
   User,
@@ -165,4 +182,7 @@ export {
   NarrativeSection,
   PortfolioItem,
   WorkSample,
+  Notification,
+  Reference,
+  ReferenceInvitation,
 };

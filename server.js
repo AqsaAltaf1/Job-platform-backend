@@ -1,8 +1,16 @@
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 // Try to load from config.env first, then fall back to .env
 try {
-  dotenv.config({ path: './config.env' });
+  dotenv.config({ path: path.join(__dirname, 'config.env') });
+  console.log('✅ Loaded environment variables from config.env');
 } catch (error) {
+  console.log('⚠️  Could not load config.env, trying .env');
   dotenv.config();
 }
 
@@ -86,6 +94,11 @@ import {
   fetchLinkedInProfile,
   importLinkedInSkills
 } from './controllers/linkedinController.js';
+import {
+  exchangeCodeForToken as googleExchangeCodeForToken,
+  fetchGoogleProfile,
+  authenticateWithGoogle
+} from './controllers/googleController.js';
 import {
   createVerificationSession,
   getVerificationStatus,
@@ -195,6 +208,28 @@ import {
 } from './controllers/narrativeController.js';
 
 import {
+  getVerifiedWorkHistory,
+  getReferences,
+  getReferenceTemplates,
+  sendReferenceRequest,
+  toggleReferenceVisibility,
+  removeReference,
+  getDashboardStats as getCandidateDashboardStats,
+  getTransparencyData
+} from './controllers/candidateDashboardController.js';
+
+import {
+  getNotifications,
+  createNotification,
+  markNotificationAsRead,
+  markAllNotificationsAsRead,
+  deleteNotification,
+  clearAllNotifications,
+  getNotificationStats,
+  bulkCreateNotifications
+} from './controllers/notificationController.js';
+
+import {
   getCustomizationData,
   savePortfolioItem,
   deletePortfolioItem,
@@ -250,6 +285,9 @@ import {
 
 // Import Stripe routes
 import stripeRoutes from './routes/stripeRoutes.js';
+
+// Import Reference routes
+import referenceRoutes from './routes/referenceRoutes.js';
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -309,6 +347,11 @@ app.post('/api/otp/cleanup', authenticateToken, requireRole(['super_admin']), cl
 app.post('/api/auth/linkedin/token', exchangeCodeForToken);
 app.post('/api/auth/linkedin/profile', fetchLinkedInProfile);
 app.post('/api/auth/linkedin/import-skills', authenticateToken, importLinkedInSkills);
+
+// Google OAuth Integration Routes
+app.post('/api/auth/google/token', googleExchangeCodeForToken);
+app.post('/api/auth/google/profile', fetchGoogleProfile);
+app.post('/api/auth/google/authenticate', authenticateWithGoogle);
 
 // Veriff Identity Verification Routes
 app.post('/api/verification/create-session', authenticateToken, createVerificationSession);
@@ -469,6 +512,26 @@ app.get('/api/employer/dashboard-stats', authenticateToken, getDashboardStats); 
 app.get('/api/employer/recent-applications', authenticateToken, getRecentApplications); // Get recent applications
 app.get('/api/employer/recent-jobs', authenticateToken, getRecentJobs); // Get recent jobs
 
+// Candidate Dashboard Routes
+app.get('/api/candidate/dashboard-stats', authenticateToken, getCandidateDashboardStats); // Get candidate dashboard statistics
+app.get('/api/candidate/transparency-data', authenticateToken, getTransparencyData); // Get candidate transparency data
+app.get('/api/candidate/verified-work-history', authenticateToken, getVerifiedWorkHistory); // Get verified work history
+app.get('/api/candidate/references', authenticateToken, getReferences); // Get candidate references
+app.get('/api/candidate/reference-templates', authenticateToken, getReferenceTemplates); // Get reference templates
+app.post('/api/candidate/references/request', authenticateToken, sendReferenceRequest); // Send reference request
+app.put('/api/candidate/references/:id/visibility', authenticateToken, toggleReferenceVisibility); // Toggle reference visibility
+app.delete('/api/candidate/references/:id', authenticateToken, removeReference); // Remove reference
+
+// Notification Routes
+app.get('/api/notifications', authenticateToken, getNotifications); // Get user notifications
+app.post('/api/notifications', authenticateToken, createNotification); // Create notification
+app.put('/api/notifications/:id/read', authenticateToken, markNotificationAsRead); // Mark notification as read
+app.put('/api/notifications/mark-all-read', authenticateToken, markAllNotificationsAsRead); // Mark all notifications as read
+app.delete('/api/notifications/:id', authenticateToken, deleteNotification); // Delete notification
+app.delete('/api/notifications/clear-all', authenticateToken, clearAllNotifications); // Clear all notifications
+app.get('/api/notifications/stats', authenticateToken, getNotificationStats); // Get notification statistics
+app.post('/api/notifications/bulk', authenticateToken, bulkCreateNotifications); // Bulk create notifications
+
 // Analytics Routes
 app.get('/api/employer/analytics', authenticateToken, getEmployerAnalytics); // Get comprehensive analytics
 
@@ -534,6 +597,9 @@ app.get('/api/companies/:id', getCompanyById); // Get company by ID
 
 // Stripe Sync Routes
 app.use('/api/stripe', stripeRoutes);
+
+// Reference Routes
+app.use('/api/references', referenceRoutes);
 
 // Start server
 app.listen(PORT, async () => {

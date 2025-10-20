@@ -1,5 +1,5 @@
 import { verifyToken } from '../utils/jwt.js';
-import { User } from '../models/index.js';
+import { User, CandidateProfile } from '../models/index.js';
 
 export const authenticateToken = async (req, res, next) => {
   try {
@@ -14,7 +14,15 @@ export const authenticateToken = async (req, res, next) => {
     }
 
     const decoded = verifyToken(token);
-    const user = await User.findByPk(decoded.id);
+    const user = await User.findByPk(decoded.id, {
+      include: [
+        {
+          model: CandidateProfile,
+          as: 'candidateProfile',
+          required: false
+        }
+      ]
+    });
 
     if (!user || !user.is_active) {
       return res.status(401).json({ 

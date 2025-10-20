@@ -1,4 +1,4 @@
-import { ReviewerInvitation, CandidateProfile, EnhancedSkill, PeerEndorsement } from '../models/index.js';
+import { ReviewerInvitation, CandidateProfile, EnhancedSkill, PeerEndorsement, User } from '../models/index.js';
 import { updateSkillAverageRating } from './enhancedSkillController.js';
 import biasReductionService from '../services/biasReductionService.js';
 import { v4 as uuidv4 } from 'uuid';
@@ -126,20 +126,20 @@ export const createReviewerInvitation = async (req, res) => {
       
       const emailData = {
         to: reviewer_email,
-        subject: `Skill Endorsement Request from ${candidateProfile.first_name} ${candidateProfile.last_name}`,
+        subject: `Skills Endorsement Request from ${candidateProfile.first_name} ${candidateProfile.last_name}`,
         text: `Hello ${reviewer_name},
 
-${candidateProfile.first_name} ${candidateProfile.last_name} has requested your endorsement for their professional skills.
+${candidateProfile.first_name} ${candidateProfile.last_name} has requested your endorsement for their specific technical and professional skills.
 
-They would like you to review and endorse their skills to help validate their professional capabilities.
+This is a SKILLS ENDORSEMENT request where you'll be asked to validate their proficiency in specific skills they've listed.
 
 What you need to do:
-1. Click the link below to access the endorsement form
-2. Review the skills they've listed
-3. Provide your honest assessment and endorsement
-4. Submit your feedback
+1. Click the link below to access the skills endorsement form
+2. Review each skill they've listed with their self-assessed level
+3. Provide your honest assessment of their skill level
+4. Submit your endorsements
 
-Endorsement Link: ${invitationLink}
+Skills Endorsement Link: ${invitationLink}
 
 Important: This invitation will expire on ${expiresAt.toLocaleDateString()}.
 
@@ -148,23 +148,23 @@ If you have any questions or concerns, please contact ${candidateProfile.first_n
 This is an automated message. Please do not reply to this email.`,
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #1e40af;">Skill Endorsement Request</h2>
+            <h2 style="color: #1e40af;">Skills Endorsement Request</h2>
             <p>Hello ${reviewer_name},</p>
-            <p><strong>${candidateProfile.first_name} ${candidateProfile.last_name}</strong> has requested your endorsement for their professional skills.</p>
-            <p>They would like you to review and endorse their skills to help validate their professional capabilities.</p>
+            <p><strong>${candidateProfile.first_name} ${candidateProfile.last_name}</strong> has requested your endorsement for their specific technical and professional skills.</p>
+            <p>This is a <strong>SKILLS ENDORSEMENT</strong> request where you'll be asked to validate their proficiency in specific skills they've listed.</p>
             <div style="background-color: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
               <h3 style="margin-top: 0;">What you need to do:</h3>
               <ol>
-                <li>Click the link below to access the endorsement form</li>
-                <li>Review the skills they've listed</li>
-                <li>Provide your honest assessment and endorsement</li>
-                <li>Submit your feedback</li>
+                <li>Click the link below to access the skills endorsement form</li>
+                <li>Review each skill they've listed with their self-assessed level</li>
+                <li>Provide your honest assessment of their skill level</li>
+                <li>Submit your endorsements</li>
               </ol>
             </div>
             <div style="text-align: center; margin: 30px 0;">
               <a href="${invitationLink}" 
                  style="background-color: #1e40af; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-                Provide Endorsement
+                Provide Skills Endorsement
               </a>
             </div>
             <p><strong>Important:</strong> This invitation will expire on ${expiresAt.toLocaleDateString()}.</p>
@@ -233,7 +233,24 @@ export const getInvitationByToken = async (req, res) => {
       return res.status(410).json({ error: 'Invitation has expired' });
     }
 
-    res.json(invitation);
+    // Get candidate user information
+    const candidateUser = await User.findByPk(invitation.candidateProfile.user_id);
+
+    res.json({
+      id: invitation.id,
+      reviewer_name: invitation.reviewer_name,
+      reviewer_email: invitation.reviewer_email,
+      skills_to_review: invitation.skills_to_review,
+      status: invitation.status,
+      expires_at: invitation.expires_at,
+      candidateProfile: {
+        id: invitation.candidateProfile.id,
+        first_name: candidateUser.first_name,
+        last_name: candidateUser.last_name,
+        email: candidateUser.email,
+        coreSkills: invitation.candidateProfile.coreSkills || []
+      }
+    });
   } catch (error) {
     console.error('Error fetching invitation by token:', error);
     res.status(500).json({ error: 'Failed to fetch invitation' });
@@ -244,13 +261,35 @@ export const getInvitationByToken = async (req, res) => {
 export const submitReviewerFeedback = async (req, res) => {
   try {
     const { token } = req.params;
-    const { endorsements } = req.body; // Array of endorsement objects
+    const { 
+      relationship, 
+      skills, 
+      comments, 
+      rating, 
+      biasCheckConfirmed 
+    } = req.body;
     
     const invitation = await ReviewerInvitation.findOne({
       where: { 
         invitation_token: token,
         is_active: true 
-      }
+      },
+      include: [
+        {
+          model: CandidateProfile,
+          as: 'candidateProfile',
+          include: [
+            {
+              model: EnhancedSkill,
+              as: 'coreSkills',
+              where: { 
+                is_active: true
+              },
+              required: false,
+            }
+          ]
+        }
+      ]
     });
 
     if (!invitation) {
@@ -268,41 +307,56 @@ export const submitReviewerFeedback = async (req, res) => {
       return res.status(400).json({ error: 'Feedback already submitted' });
     }
 
+    // Validate required fields
+    if (!relationship || !skills || skills.length === 0 || !comments?.trim()) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    if (!biasCheckConfirmed) {
+      return res.status(400).json({ error: 'Bias check confirmation required' });
+    }
+
+    // Apply bias reduction to comments
+    let processedComments = comments;
+    try {
+      const processedData = await biasReductionService.processEndorsement({
+        endorsement_text: comments
+      });
+      processedComments = processedData.endorsement_text;
+    } catch (biasError) {
+      console.error('Bias reduction failed, using original text:', biasError);
+      // Continue with original text if bias reduction fails
+    }
+
     // Create endorsements for each skill
     const createdEndorsements = [];
-    for (const endorsement of endorsements) {
-      // Get the skill to use its level (set by candidate)
-      const skill = await EnhancedSkill.findByPk(endorsement.skill_id);
+    for (const skillRating of skills) {
+      const [skillName, level] = skillRating.split(':');
       
-      // Apply bias reduction to endorsement text
-      let processedEndorsementText = endorsement.endorsement_text;
-      if (processedEndorsementText && processedEndorsementText.trim()) {
-        try {
-          const processedData = await biasReductionService.processEndorsement({
-            endorsement_text: processedEndorsementText
-          });
-          processedEndorsementText = processedData.endorsement_text;
-        } catch (biasError) {
-          console.error('Bias reduction failed, using original text:', biasError);
-          // Continue with original text if bias reduction fails
-        }
-      }
+      // Find the corresponding enhanced skill
+      const skill = invitation.candidateProfile.coreSkills.find(s => 
+        s.name.toLowerCase() === skillName.toLowerCase()
+      );
       
-      const newEndorsement = await PeerEndorsement.create({
-        id: uuidv4(),
-        enhanced_skill_id: endorsement.skill_id,
-        endorser_name: invitation.reviewer_name || 'Anonymous',
-        endorser_email: invitation.reviewer_email,
-        relationship: endorsement.relationship || 'other',
-        endorsement_text: processedEndorsementText,
-        skill_level: skill.level, // Use candidate's self-assessed level
-        star_rating: endorsement.star_rating || 3,
-        verified: true // Auto-verify endorsements from invited reviewers
-      });
-      createdEndorsements.push(newEndorsement);
+      if (skill) {
+        const newEndorsement = await PeerEndorsement.create({
+          id: uuidv4(),
+          enhanced_skill_id: skill.id,
+          endorser_name: invitation.reviewer_name || 'Anonymous',
+          endorser_email: invitation.reviewer_email,
+          endorser_position: '', // Could be added to invitation
+          endorser_company: '', // Could be added to invitation
+          relationship: relationship,
+          endorsement_text: processedComments,
+          skill_level: level,
+          star_rating: rating || 3,
+          verified: true // Auto-verify endorsements from invited reviewers
+        });
+        createdEndorsements.push(newEndorsement);
 
-      // Update the average rating for this skill
-      await updateSkillAverageRating(endorsement.skill_id);
+        // Update the average rating for this skill
+        await updateSkillAverageRating(skill.id);
+      }
     }
 
     // Mark invitation as completed
@@ -311,8 +365,27 @@ export const submitReviewerFeedback = async (req, res) => {
       completed_at: new Date()
     });
 
+    // Send notification to candidate about new reference
+    try {
+      const { Notification } = await import('../models/index.js');
+      await Notification.create({
+        user_id: invitation.candidateProfile.user_id,
+        type: 'reference',
+        title: 'New Reference Received',
+        message: `${invitation.reviewer_name || 'Someone'} has submitted a reference for you.`,
+        data: {
+          referrerName: invitation.reviewer_name,
+          type: 'reference_submitted'
+        },
+        is_read: false
+      });
+    } catch (notificationError) {
+      console.error('Error creating notification:', notificationError);
+      // Don't fail the main operation if notification fails
+    }
+
     res.json({ 
-      message: 'Feedback submitted successfully',
+      message: 'Reference submitted successfully',
       endorsements: createdEndorsements
     });
   } catch (error) {
