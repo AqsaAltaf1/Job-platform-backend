@@ -6,6 +6,7 @@ import { Op } from 'sequelize';
  */
 export const getNotifications = async (req, res) => {
   try {
+    console.log('🔔 getNotifications called for user:', req.user?.id);
     const userId = req.user.id;
     const { limit = 50, offset = 0, unread_only = false } = req.query;
 
@@ -20,6 +21,9 @@ export const getNotifications = async (req, res) => {
       limit: parseInt(limit),
       offset: parseInt(offset)
     });
+
+    console.log('🔔 Found notifications:', notifications.length);
+    console.log('🔔 Notifications:', notifications.map(n => ({ id: n.id, type: n.type, title: n.title })));
 
     res.json({
       success: true,

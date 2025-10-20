@@ -3,12 +3,12 @@ import sequelize from '../config/database.js';
 
 const Notification = sequelize.define('Notification', {
   id: {
-    type: DataTypes.INTEGER,
+    type: DataTypes.UUID,
     primaryKey: true,
-    autoIncrement: true,
+    defaultValue: DataTypes.UUIDV4,
   },
   user_id: {
-    type: DataTypes.INTEGER,
+    type: DataTypes.UUID,
     allowNull: false,
     references: {
       model: 'users',
@@ -24,7 +24,7 @@ const Notification = sequelize.define('Notification', {
     allowNull: false,
   },
   type: {
-    type: DataTypes.ENUM('info', 'success', 'warning', 'error', 'reference', 'application', 'interview', 'system'),
+    type: DataTypes.ENUM('info', 'success', 'warning', 'error', 'reference', 'application', 'interview', 'system', 'reference_completed', 'work_history_verified', 'work_history_declined', 'profile_view'),
     defaultValue: 'info',
   },
   is_read: {
@@ -35,9 +35,10 @@ const Notification = sequelize.define('Notification', {
     type: DataTypes.DATE,
     allowNull: true,
   },
-  metadata: {
+  data: {
     type: DataTypes.JSONB,
     allowNull: true,
+    defaultValue: {},
   },
   created_at: {
     type: DataTypes.DATE,

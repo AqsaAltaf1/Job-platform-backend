@@ -1,4 +1,4 @@
-import { Reference, ReferenceInvitation, User } from '../models/index.js';
+import { Reference, ReferenceInvitation, User, ProfileView } from '../models/index.js';
 import biasReductionService from '../services/biasReductionService.js';
 import crypto from 'crypto';
 import sgMail from '@sendgrid/mail';
@@ -259,6 +259,30 @@ const submitReference = async (req, res) => {
       completed_at: new Date()
     });
 
+    // Create notification for the candidate
+    try {
+      console.log('🔔 Creating reference notification for candidate:', invitation.candidate_id);
+      const { Notification } = await import('../models/index.js');
+      const notification = await Notification.create({
+        user_id: invitation.candidate_id,
+        type: 'reference_completed',
+        title: 'New Reference Received!',
+        message: `${invitation.reviewer_name} has submitted a reference for you.`,
+        data: {
+          reference_id: reference.id,
+          reviewer_name: invitation.reviewer_name,
+          reviewer_email: invitation.reviewer_email,
+          overall_rating: reference.overall_rating,
+          completed_at: new Date()
+        },
+        is_read: false
+      });
+      console.log('✅ Reference notification created successfully:', notification.id);
+    } catch (notificationError) {
+      console.error('❌ Error creating reference notification:', notificationError);
+      // Don't fail the main request if notification creation fails
+    }
+
     // Send confirmation email to candidate (don't fail if email fails)
     try {
       await sendReferenceConfirmationEmail(invitation, reference);
@@ -433,10 +457,264 @@ const sendReferenceConfirmationEmail = async (invitation, reference) => {
   }
 };
 
+// Request update for completed reference
+const requestReferenceUpdate = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const candidate_id = req.user.id;
+
+    // Find the reference
+    const reference = await Reference.findOne({
+      where: { id, candidate_id, status: 'completed' },
+      include: [{
+        model: ReferenceInvitation,
+        as: 'invitation'
+      }]
+    });
+
+    if (!reference) {
+      return res.status(404).json({
+        success: false,
+        message: 'Reference not found or not completed'
+      });
+    }
+
+    // Generate new token for update request
+    const newToken = crypto.randomBytes(32).toString('hex');
+    const expires_at = new Date();
+    expires_at.setDate(expires_at.getDate() + 30);
+
+    // Update the invitation with new token
+    await reference.invitation.update({
+      token: newToken,
+      expires_at,
+      status: 'pending'
+    });
+
+    // Send update request email
+    await sendReferenceUpdateEmail(reference.invitation, reference);
+
+    res.json({
+      success: true,
+      message: 'Update request sent successfully',
+      data: {
+        new_token: newToken,
+        expires_at
+      }
+    });
+
+  } catch (error) {
+    console.error('Error requesting reference update:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to request reference update',
+      error: error.message
+    });
+  }
+};
+
+// Toggle outdated status for reference
+const toggleReferenceOutdated = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { is_outdated } = req.body;
+    const candidate_id = req.user.id;
+
+    const reference = await Reference.findOne({
+      where: { id, candidate_id, status: 'completed' }
+    });
+
+    if (!reference) {
+      return res.status(404).json({
+        success: false,
+        message: 'Reference not found or not completed'
+      });
+    }
+
+    await reference.update({ is_outdated });
+
+    res.json({
+      success: true,
+      message: `Reference marked as ${is_outdated ? 'outdated' : 'current'}`,
+      data: reference
+    });
+
+  } catch (error) {
+    console.error('Error toggling reference outdated status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update reference status',
+      error: error.message
+    });
+  }
+};
+
+// Log profile view
+const logProfileView = async (req, res) => {
+  try {
+    const { candidate_id } = req.params;
+    const viewer_id = req.user?.id || null;
+    const viewer_type = req.user?.role || 'anonymous';
+    const viewer_email = req.user?.email || null;
+    const viewer_company = req.user?.employerProfile?.company_name || null;
+    const ip_address = req.ip || req.connection.remoteAddress;
+    const user_agent = req.get('User-Agent');
+
+    // Don't log views from the candidate themselves
+    if (viewer_id === candidate_id) {
+      return res.json({ success: true, message: 'Self-view not logged' });
+    }
+
+    // Check if this is a duplicate view (same viewer, same day)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const existingView = await ProfileView.findOne({
+      where: {
+        candidate_id,
+        viewer_id,
+        viewed_at: {
+          [require('sequelize').Op.gte]: today,
+          [require('sequelize').Op.lt]: tomorrow
+        }
+      }
+    });
+
+    if (existingView) {
+      return res.json({ success: true, message: 'View already logged today' });
+    }
+
+    // Create new profile view
+    await ProfileView.create({
+      candidate_id,
+      viewer_id,
+      viewer_type,
+      viewer_email,
+      viewer_company,
+      ip_address,
+      user_agent
+    });
+
+    res.json({ success: true, message: 'Profile view logged' });
+
+  } catch (error) {
+    console.error('Error logging profile view:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to log profile view',
+      error: error.message
+    });
+  }
+};
+
+// Get profile view transparency data
+const getProfileViewTransparency = async (req, res) => {
+  try {
+    const candidate_id = req.user.id;
+
+    const views = await ProfileView.findAll({
+      where: { candidate_id },
+      include: [{
+        model: User,
+        as: 'viewer',
+        attributes: ['id', 'first_name', 'last_name', 'email']
+      }],
+      order: [['viewed_at', 'DESC']],
+      limit: 100 // Limit to last 100 views
+    });
+
+    // Group views by date for better display
+    const viewsByDate = views.reduce((acc, view) => {
+      const date = view.viewed_at.toISOString().split('T')[0];
+      if (!acc[date]) {
+        acc[date] = [];
+      }
+      acc[date].push(view);
+      return acc;
+    }, {});
+
+    res.json({
+      success: true,
+      data: {
+        total_views: views.length,
+        views_by_date: viewsByDate,
+        recent_views: views.slice(0, 20)
+      }
+    });
+
+  } catch (error) {
+    console.error('Error getting profile view transparency:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get profile view data',
+      error: error.message
+    });
+  }
+};
+
+// Email function for reference update request
+const sendReferenceUpdateEmail = async (invitation, reference) => {
+  try {
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const reviewUrl = `${frontendUrl}/reference/${invitation.token}`;
+
+    const msg = {
+      to: invitation.reviewer_email,
+      from: {
+        email: 'noreply@yourjobplatform.com',
+        name: 'Job Platform'
+      },
+      subject: `Reference Update Request - ${invitation.candidate.first_name} ${invitation.candidate.last_name}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">Reference Update Request</h2>
+          
+          <p>Dear ${invitation.reviewer_name},</p>
+          
+          <p><strong>${invitation.candidate.first_name} ${invitation.candidate.last_name}</strong> has requested an update to your previous reference.</p>
+          
+          <p>You previously provided a reference on ${reference.created_at.toLocaleDateString()}. The candidate would like you to review and potentially update your feedback.</p>
+          
+          <p>To update your reference, please click the link below:</p>
+          
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${reviewUrl}" 
+               style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">
+              Update Reference
+            </a>
+          </div>
+          
+          <p><strong>This update request expires on:</strong> ${new Date(invitation.expires_at).toLocaleDateString()}</p>
+          
+          <p>If you don't wish to update your reference, you can simply ignore this email.</p>
+          
+          <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
+          <p style="color: #666; font-size: 12px;">
+            This is an automated message. Please do not reply to this email.
+          </p>
+        </div>
+      `
+    };
+
+    await sgMail.send(msg);
+    console.log('Reference update email sent successfully');
+
+  } catch (error) {
+    console.error('Error sending reference update email:', error);
+    throw error;
+  }
+};
+
 export {
   createReferenceInvitation,
   getReferenceInvitation,
   submitReference,
   getCandidateReferences,
-  getCandidateReferenceInvitations
+  getCandidateReferenceInvitations,
+  requestReferenceUpdate,
+  toggleReferenceOutdated,
+  logProfileView,
+  getProfileViewTransparency
 };

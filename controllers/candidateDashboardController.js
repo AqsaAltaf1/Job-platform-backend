@@ -386,6 +386,26 @@ export const removeReference = async (req, res) => {
       });
     }
 
+    // Delete associated notifications
+    try {
+      const { Notification } = await import('../models/index.js');
+      await Notification.destroy({
+        where: {
+          user_id: candidateId,
+          type: 'reference_completed',
+          data: {
+            [require('sequelize').Op.contains]: {
+              reviewer_name: invitation.reviewer_name,
+              reviewer_email: invitation.reviewer_email
+            }
+          }
+        }
+      });
+      console.log('🗑️ Deleted associated notifications for reference:', invitation.reviewer_name);
+    } catch (notificationError) {
+      console.error('Error deleting associated notifications:', notificationError);
+    }
+
     // If there's an associated reference, delete it first
     if (invitation.reference) {
       await Reference.destroy({

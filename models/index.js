@@ -28,6 +28,11 @@ import { WorkSample } from './WorkSample.js';
 import Notification from './Notification.js';
 import Reference from './Reference.js';
 import ReferenceInvitation from './ReferenceInvitation.js';
+import VerifiedEmploymentModel from './VerifiedEmployment.js';
+import ProfileView from './ProfileView.js';
+
+// Initialize models that are factory functions
+const VerifiedEmployment = VerifiedEmploymentModel(sequelize);
 
 // Define associations
 User.hasOne(EmployerProfile, { foreignKey: 'user_id', as: 'employerProfile' });
@@ -48,6 +53,7 @@ Education.belongsTo(CandidateProfile, { foreignKey: 'user_profile_id', as: 'cand
 // Enhanced Skills associations
 CandidateProfile.hasMany(EnhancedSkill, { foreignKey: 'candidate_profile_id', as: 'coreSkills' });
 CandidateProfile.hasMany(ReviewerInvitation, { foreignKey: 'candidate_profile_id', as: 'reviewerInvitations' });
+CandidateProfile.hasMany(VerifiedEmployment, { foreignKey: 'candidate_profile_id', as: 'verifiedEmployments' });
 
 EnhancedSkill.belongsTo(CandidateProfile, { foreignKey: 'candidate_profile_id', as: 'candidateProfile' });
 EnhancedSkill.hasMany(SkillEvidence, { foreignKey: 'enhanced_skill_id', as: 'evidence' });
@@ -56,6 +62,7 @@ EnhancedSkill.hasMany(PeerEndorsement, { foreignKey: 'enhanced_skill_id', as: 'e
 SkillEvidence.belongsTo(EnhancedSkill, { foreignKey: 'enhanced_skill_id', as: 'enhancedSkill' });
 PeerEndorsement.belongsTo(EnhancedSkill, { foreignKey: 'enhanced_skill_id', as: 'enhancedSkill' });
 ReviewerInvitation.belongsTo(CandidateProfile, { foreignKey: 'candidate_profile_id', as: 'candidateProfile' });
+VerifiedEmployment.belongsTo(CandidateProfile, { foreignKey: 'candidate_profile_id', as: 'candidateProfile' });
 
 // Team Member associations
 EmployerProfile.hasMany(TeamMember, { foreignKey: 'employer_profile_id', as: 'teamMembers' });
@@ -155,6 +162,11 @@ ReferenceInvitation.belongsTo(User, { foreignKey: 'candidate_id', as: 'candidate
 ReferenceInvitation.hasOne(Reference, { foreignKey: 'invitation_id', as: 'reference' });
 Reference.belongsTo(ReferenceInvitation, { foreignKey: 'invitation_id', as: 'invitation' });
 
+// Profile View associations
+User.hasMany(ProfileView, { foreignKey: 'candidate_id', as: 'profileViews' });
+ProfileView.belongsTo(User, { foreignKey: 'candidate_id', as: 'candidate' });
+ProfileView.belongsTo(User, { foreignKey: 'viewer_id', as: 'viewer' });
+
 export {
   sequelize,
   User,
@@ -185,4 +197,6 @@ export {
   Notification,
   Reference,
   ReferenceInvitation,
+  VerifiedEmployment,
+  ProfileView,
 };

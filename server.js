@@ -283,11 +283,19 @@ import {
   getCompanyStats
 } from './controllers/companyController.js';
 
+import {
+  getCandidatesForSearch,
+  getCandidateProfileForEmployer,
+  getEmployerDashboardStats,
+  testEmployerCandidates
+} from './controllers/employerController.js';
+
 // Import Stripe routes
 import stripeRoutes from './routes/stripeRoutes.js';
 
 // Import Reference routes
 import referenceRoutes from './routes/referenceRoutes.js';
+import verifiedEmploymentRoutes from './routes/verifiedEmploymentRoutes.js';
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -527,8 +535,8 @@ app.get('/api/notifications', authenticateToken, getNotifications); // Get user 
 app.post('/api/notifications', authenticateToken, createNotification); // Create notification
 app.put('/api/notifications/:id/read', authenticateToken, markNotificationAsRead); // Mark notification as read
 app.put('/api/notifications/mark-all-read', authenticateToken, markAllNotificationsAsRead); // Mark all notifications as read
-app.delete('/api/notifications/:id', authenticateToken, deleteNotification); // Delete notification
 app.delete('/api/notifications/clear-all', authenticateToken, clearAllNotifications); // Clear all notifications
+app.delete('/api/notifications/:id', authenticateToken, deleteNotification); // Delete notification
 app.get('/api/notifications/stats', authenticateToken, getNotificationStats); // Get notification statistics
 app.post('/api/notifications/bulk', authenticateToken, bulkCreateNotifications); // Bulk create notifications
 
@@ -546,6 +554,12 @@ app.post('/api/applications/:application_id/rating', authenticateToken, createOr
 app.get('/api/applications/:application_id/ratings', authenticateToken, getApplicationRatings); // Get application ratings
 app.get('/api/employer/rating-analytics', authenticateToken, getRatingAnalytics); // Get rating analytics
 app.delete('/api/ratings/:rating_id', authenticateToken, deleteRating); // Delete rating
+
+// Employer Search Routes
+app.get('/api/employer/candidates', authenticateToken, requireRole(['employer', 'team_member']), getCandidatesForSearch); // Search candidates
+app.get('/api/employer/candidates/:candidateId', authenticateToken, requireRole(['employer', 'team_member']), getCandidateProfileForEmployer); // Get candidate profile
+app.get('/api/employer/dashboard-stats', authenticateToken, requireRole(['employer', 'team_member']), getEmployerDashboardStats); // Get dashboard statistics
+app.get('/api/employer/test-candidates', authenticateToken, requireRole(['employer', 'team_member']), testEmployerCandidates); // Test candidates endpoint
 
 // Bulk Actions Routes
 app.post('/api/employer/bulk/update-status', authenticateToken, bulkUpdateStatus); // Bulk update application status
@@ -600,6 +614,9 @@ app.use('/api/stripe', stripeRoutes);
 
 // Reference Routes
 app.use('/api/references', referenceRoutes);
+
+// Verified Employment Routes
+app.use('/api/verified-employment', verifiedEmploymentRoutes);
 
 // Start server
 app.listen(PORT, async () => {
