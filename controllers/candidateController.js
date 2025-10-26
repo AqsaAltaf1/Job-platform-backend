@@ -1,4 +1,4 @@
-import { User, CandidateProfile, Experience, Education, Project, CandidateRating, JobApplication } from '../models/index.js';
+import { User, CandidateProfile, Experience, Education, Project, CandidateRating, JobApplication, ProfileView, Notification } from '../models/index.js';
 import { Op } from 'sequelize';
 
 /**
@@ -151,6 +151,48 @@ export const getCandidateProfile = async (req, res) => {
         success: false,
         error: 'Candidate not found'
       });
+    }
+
+    // Log profile view and create notification
+    try {
+      // Don't log views from the candidate themselves
+      if (req.user.id !== id) {
+        await ProfileView.create({
+          candidate_id: id,
+          viewer_id: req.user.id,
+          viewer_type: req.user.role || 'employer',
+          viewer_email: req.user.email,
+          viewer_company: req.user.employerProfile?.company_name,
+          ip_address: req.ip || req.connection.remoteAddress,
+          user_agent: req.get('User-Agent')
+        });
+
+        // Create notification for the candidate about profile view
+        try {
+          const viewerName = req.user.employerProfile?.company_name || req.user.email || 'An employer';
+          const companyName = req.user.employerProfile?.company_name || 'a company';
+          
+          await Notification.create({
+            user_id: id,
+            type: 'profile_view',
+            title: 'Profile Viewed',
+            message: `${viewerName} from ${companyName} viewed your profile.`,
+            data: {
+              viewerName,
+              companyName,
+              viewerType: req.user.role || 'employer',
+              type: 'profile_view'
+            },
+            is_read: false
+          });
+          console.log('✅ Profile view notification created for candidate:', id);
+        } catch (notificationError) {
+          console.error('❌ Error creating profile view notification:', notificationError);
+          // Don't fail the main request if notification creation fails
+        }
+      }
+    } catch (viewError) {
+      console.log('Could not log profile view (likely duplicate):', viewError.message);
     }
 
     // Get ratings for this candidate through job applications

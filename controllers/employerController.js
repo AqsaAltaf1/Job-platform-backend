@@ -1,4 +1,4 @@
-import { User, CandidateProfile, Reference, VerifiedEmployment, ProfileView } from '../models/index.js';
+import { User, CandidateProfile, Reference, VerifiedEmployment, ProfileView, Notification } from '../models/index.js';
 import { Op } from 'sequelize';
 
 // Get candidates for employer search
@@ -296,6 +296,30 @@ export const getCandidateProfileForEmployer = async (req, res) => {
         ip_address: req.ip || req.connection.remoteAddress,
         user_agent: req.get('User-Agent')
       });
+
+      // Create notification for the candidate about profile view
+      try {
+        const viewerName = req.user.employerProfile?.company_name || req.user.email || 'An employer';
+        const companyName = req.user.employerProfile?.company_name || 'a company';
+        
+        await Notification.create({
+          user_id: candidateId,
+          type: 'profile_view',
+          title: 'Profile Viewed',
+          message: `${viewerName} from ${companyName} viewed your profile.`,
+          data: {
+            viewerName,
+            companyName,
+            viewerType: 'employer',
+            type: 'profile_view'
+          },
+          is_read: false
+        });
+        console.log('✅ Profile view notification created for candidate:', candidateId);
+      } catch (notificationError) {
+        console.error('❌ Error creating profile view notification:', notificationError);
+        // Don't fail the main request if notification creation fails
+      }
     } catch (viewError) {
       console.log('Could not log profile view (likely duplicate):', viewError.message);
     }
