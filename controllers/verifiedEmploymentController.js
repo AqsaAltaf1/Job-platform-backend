@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { VerifiedEmployment, CandidateProfile, User, Notification } from '../models/index.js';
+import { Op } from 'sequelize';
 import { sendEmail } from '../utils/emailService.js';
 
 const REVIEW_TOKEN_TTL_HOURS = 168; // 7 days
@@ -81,7 +82,7 @@ export const deleteVerifiedEmployment = async (req, res) => {
           user_id: req.user.id,
           type: ['work_history_verified', 'work_history_declined'],
           data: {
-            [require('sequelize').Op.contains]: {
+            [Op.contains]: {
               company_name: record.company_name,
               title: record.title
             }

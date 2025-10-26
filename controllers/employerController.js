@@ -1,5 +1,6 @@
-import { User, CandidateProfile, Reference, VerifiedEmployment, ProfileView, Notification } from '../models/index.js';
+import { User, CandidateProfile, Reference, VerifiedEmployment, ProfileView, Notification, PrivacySetting, Experience, Education, Project } from '../models/index.js';
 import { Op } from 'sequelize';
+import AuditService from '../services/auditService.js';
 
 // Get candidates for employer search
 export const getCandidatesForSearch = async (req, res) => {
@@ -25,6 +26,26 @@ export const getCandidatesForSearch = async (req, res) => {
       role: 'candidate',
       is_active: true
     };
+
+    // Get privacy settings for all candidates to filter out private profiles
+    const privacySettings = await PrivacySetting.findAll({
+      where: {
+        setting_type: 'profile_visibility',
+        is_active: true
+      },
+      attributes: ['user_id', 'setting_value']
+    });
+
+    // Filter out candidates who have set their profile to private
+    const privateProfileUserIds = privacySettings
+      .filter(setting => !setting.setting_value?.public)
+      .map(setting => setting.user_id);
+
+    if (privateProfileUserIds.length > 0) {
+      whereConditions.id = {
+        [Op.notIn]: privateProfileUserIds
+      };
+    }
     
     console.log('🔍 Basic where conditions:', whereConditions);
 
@@ -176,6 +197,7 @@ export const getCandidatesForSearch = async (req, res) => {
         email: candidate.email,
         location: candidate.candidateProfile?.location,
         profile_picture: candidate.candidateProfile?.profile_picture,
+        created_at: candidate.created_at,
         candidate_profile: {
           bio: candidate.candidateProfile?.bio,
           skills: candidate.candidateProfile?.skills || [],
@@ -183,7 +205,9 @@ export const getCandidatesForSearch = async (req, res) => {
           current_title: candidate.candidateProfile?.current_title,
           current_company: candidate.candidateProfile?.current_company,
           industry: candidate.candidateProfile?.industry,
-          job_type_preference: candidate.candidateProfile?.job_type_preference
+          job_type_preference: candidate.candidateProfile?.job_type_preference,
+          availability: candidate.candidateProfile?.availability,
+          salary_expectation: candidate.candidateProfile?.salary_expectation
         },
         references: candidate.references?.map(ref => ({
           id: ref.id,
@@ -251,6 +275,22 @@ export const getCandidateProfileForEmployer = async (req, res) => {
   try {
     const { candidateId } = req.params;
 
+    // Check if candidate has set their profile to private
+    const privacySetting = await PrivacySetting.findOne({
+      where: {
+        user_id: candidateId,
+        setting_type: 'profile_visibility',
+        is_active: true
+      }
+    });
+
+    if (privacySetting && !privacySetting.setting_value?.public) {
+      return res.status(403).json({
+        success: false,
+        message: 'This candidate has set their profile to private'
+      });
+    }
+
     const candidate = await User.findOne({
       where: { 
         id: candidateId,
@@ -266,13 +306,30 @@ export const getCandidateProfileForEmployer = async (req, res) => {
               model: VerifiedEmployment,
               as: 'verifiedEmployments',
               required: false
+            },
+            {
+              model: Experience,
+              as: 'experiences',
+              required: false,
+              order: [['start_date', 'DESC']]
+            },
+            {
+              model: Education,
+              as: 'educations',
+              required: false,
+              order: [['graduation_year', 'DESC']]
+            },
+            {
+              model: Project,
+              as: 'projects',
+              required: false,
+              order: [['created_at', 'DESC']]
             }
           ]
         },
         {
           model: Reference,
           as: 'references',
-          where: { is_public: true },
           required: false
         }
       ]
@@ -285,43 +342,188 @@ export const getCandidateProfileForEmployer = async (req, res) => {
       });
     }
 
+    // Check if candidate has set their references to private
+    const referencePrivacySetting = await PrivacySetting.findOne({
+      where: {
+        user_id: candidateId,
+        setting_type: 'reference_visibility',
+        is_active: true
+      }
+    });
+
+    console.log('🔍 Reference privacy setting:', referencePrivacySetting ? {
+      exists: true,
+      public: referencePrivacySetting.setting_value?.public,
+      setting_value: referencePrivacySetting.setting_value
+    } : { exists: false });
+
+    // If references are set to private, remove them from the response
+    // Default behavior: references are visible unless explicitly set to private
+    if (referencePrivacySetting && referencePrivacySetting.setting_value?.public === false) {
+      console.log('🔒 Hiding references - privacy setting set to private');
+      candidate.references = [];
+    } else {
+      console.log('✅ Showing references - privacy setting allows or no setting exists');
+    }
+
+    // Check contact info sharing setting
+    const contactPrivacySetting = await PrivacySetting.findOne({
+      where: {
+        user_id: candidateId,
+        setting_type: 'contact_info_sharing',
+        is_active: true
+      }
+    });
+
+    console.log('📧 Contact info privacy setting:', contactPrivacySetting ? {
+      exists: true,
+      enabled: contactPrivacySetting.setting_value?.enabled,
+      setting_value: contactPrivacySetting.setting_value
+    } : { exists: false });
+
+    // If contact info sharing is disabled, remove contact details
+    // Default behavior: contact info is visible unless explicitly disabled
+    if (contactPrivacySetting && contactPrivacySetting.setting_value?.enabled === false) {
+      console.log('🔒 Hiding contact info - privacy setting set to disabled');
+      // Remove email and phone from response
+      if (candidate.email) candidate.email = '[Contact Restricted]';
+      if (candidate.candidateProfile?.phone) candidate.candidateProfile.phone = '[Contact Restricted]';
+    } else {
+      console.log('✅ Showing contact info - privacy setting allows or no setting exists');
+    }
+
+    // Check anonymization level
+    const anonymizationSetting = await PrivacySetting.findOne({
+      where: {
+        user_id: candidateId,
+        setting_type: 'anonymization_level',
+        is_active: true
+      }
+    });
+
+    // Apply anonymization based on level
+    if (anonymizationSetting) {
+      const level = anonymizationSetting.setting_value?.level || 'none';
+      
+      switch (level) {
+        case 'basic':
+          // Anonymize company names and specific locations
+          if (candidate.candidateProfile?.current_company) {
+            candidate.candidateProfile.current_company = '[Company Name Hidden]';
+          }
+          break;
+        case 'advanced':
+          // Anonymize more details
+          if (candidate.candidateProfile?.current_company) {
+            candidate.candidateProfile.current_company = '[Company Name Hidden]';
+          }
+          if (candidate.candidateProfile?.location) {
+            candidate.candidateProfile.location = candidate.candidateProfile.location.split(',')[0] + ' Area';
+          }
+          break;
+        case 'maximum':
+          // Maximum anonymization
+          if (candidate.candidateProfile?.current_company) {
+            candidate.candidateProfile.current_company = '[Company Name Hidden]';
+          }
+          if (candidate.candidateProfile?.current_title) {
+            candidate.candidateProfile.current_title = '[Job Title Hidden]';
+          }
+          if (candidate.candidateProfile?.location) {
+            candidate.candidateProfile.location = '[Location Hidden]';
+          }
+          break;
+      }
+    }
+
     // Log profile view
     try {
-      await ProfileView.create({
-        candidate_id: candidateId,
-        viewer_id: req.user.id,
-        viewer_type: 'employer',
-        viewer_email: req.user.email,
-        viewer_company: req.user.employerProfile?.company_name,
-        ip_address: req.ip || req.connection.remoteAddress,
-        user_agent: req.get('User-Agent')
-      });
+      // Check if we already logged a view from this viewer in the last 5 minutes
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+          const existingView = await ProfileView.findOne({
+            where: {
+              candidate_id: candidateId,
+              viewer_id: req.user.id,
+              viewed_at: {
+                [Op.gte]: fiveMinutesAgo
+              }
+            }
+          });
 
-      // Create notification for the candidate about profile view
-      try {
-        const viewerName = req.user.employerProfile?.company_name || req.user.email || 'An employer';
-        const companyName = req.user.employerProfile?.company_name || 'a company';
-        
-        await Notification.create({
-          user_id: candidateId,
-          type: 'profile_view',
-          title: 'Profile Viewed',
-          message: `${viewerName} from ${companyName} viewed your profile.`,
-          data: {
-            viewerName,
-            companyName,
-            viewerType: 'employer',
-            type: 'profile_view'
-          },
-          is_read: false
+      if (!existingView) {
+        await ProfileView.create({
+          candidate_id: candidateId,
+          viewer_id: req.user.id,
+          viewer_type: 'employer',
+          viewer_email: req.user.email,
+          viewer_company: req.user.employerProfile?.company_name,
+          ip_address: req.ip || req.connection.remoteAddress,
+          user_agent: req.get('User-Agent')
         });
-        console.log('✅ Profile view notification created for candidate:', candidateId);
-      } catch (notificationError) {
-        console.error('❌ Error creating profile view notification:', notificationError);
-        // Don't fail the main request if notification creation fails
+
+        // Log profile view in audit log
+        await AuditService.logEvent({
+          userId: candidateId,
+          actionType: 'profile_view',
+          actionCategory: 'profile',
+          description: `Profile viewed by employer ${req.user.email}`,
+          targetUserId: req.user.id,
+          metadata: {
+            viewerType: 'employer',
+            viewerEmail: req.user.email,
+            viewerCompany: req.user.employerProfile?.company_name
+          },
+          ipAddress: req.ip || req.connection.remoteAddress,
+          userAgent: req.get('User-Agent')
+        });
+
+        // Create notification for the candidate about profile view (with cooldown)
+        try {
+          // Check if we already created a notification for this viewer in the last 5 minutes
+          const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+          const existingNotification = await Notification.findOne({
+            where: {
+              user_id: candidateId,
+              type: 'profile_view',
+              data: {
+                viewerType: 'employer'
+              },
+              created_at: {
+                [Op.gte]: fiveMinutesAgo
+              }
+            }
+          });
+
+          if (!existingNotification) {
+            const viewerName = req.user.employerProfile?.company_name || req.user.email || 'An employer';
+            const companyName = req.user.employerProfile?.company_name || 'a company';
+            
+            await Notification.create({
+              user_id: candidateId,
+              type: 'profile_view',
+              title: 'Profile Viewed',
+              message: `${viewerName} from ${companyName} viewed your profile.`,
+              data: {
+                viewerName,
+                companyName,
+                viewerType: 'employer',
+                type: 'profile_view'
+              },
+              is_read: false
+            });
+            console.log('✅ Profile view notification created for candidate:', candidateId);
+          } else {
+            console.log('⏭️ Skipping duplicate profile view notification (within 5 minutes)');
+          }
+        } catch (notificationError) {
+          console.error('❌ Error creating profile view notification:', notificationError);
+          // Don't fail the main request if notification creation fails
+        }
+      } else {
+        console.log('⏭️ Skipping duplicate profile view (within 5 minutes)');
       }
     } catch (viewError) {
-      console.log('Could not log profile view (likely duplicate):', viewError.message);
+      console.log('Could not log profile view:', viewError.message);
     }
 
     // Calculate average rating
@@ -341,6 +543,7 @@ export const getCandidateProfileForEmployer = async (req, res) => {
       email: candidate.email,
       location: candidate.candidateProfile?.location,
       profile_picture: candidate.candidateProfile?.profile_picture,
+      created_at: candidate.created_at,
       candidate_profile: {
         bio: candidate.candidateProfile?.bio,
         skills: candidate.candidateProfile?.skills || [],
@@ -349,9 +552,44 @@ export const getCandidateProfileForEmployer = async (req, res) => {
         current_company: candidate.candidateProfile?.current_company,
         industry: candidate.candidateProfile?.industry,
         job_type_preference: candidate.candidateProfile?.job_type_preference,
+        availability: candidate.candidateProfile?.availability,
+        salary_expectation: candidate.candidateProfile?.salary_expectation,
         portfolio_items: candidate.candidateProfile?.portfolio_items || [],
         work_samples: candidate.candidateProfile?.work_samples || []
       },
+      experiences: candidate.candidateProfile?.experiences?.map(exp => ({
+        id: exp.id,
+        company_name: exp.company_name,
+        title: exp.title,
+        employment_type: exp.employment_type,
+        start_date: exp.start_date,
+        end_date: exp.end_date,
+        current: exp.current,
+        description: exp.description,
+        location: exp.location,
+        achievements: exp.achievements
+      })) || [],
+      educations: candidate.candidateProfile?.educations?.map(edu => ({
+        id: edu.id,
+        institution: edu.institution,
+        degree: edu.degree,
+        field_of_study: edu.field_of_study,
+        graduation_year: edu.graduation_year,
+        gpa: edu.gpa,
+        description: edu.description,
+        activities: edu.activities
+      })) || [],
+      projects: candidate.candidateProfile?.projects?.map(proj => ({
+        id: proj.id,
+        name: proj.name,
+        description: proj.description,
+        technologies: proj.technologies,
+        start_date: proj.start_date,
+        end_date: proj.end_date,
+        url: proj.url,
+        github_url: proj.github_url,
+        achievements: proj.achievements
+      })) || [],
       references: candidate.references?.map(ref => ({
         id: ref.id,
         reviewer_name: ref.reviewer_name,

@@ -30,6 +30,9 @@ import Reference from './Reference.js';
 import ReferenceInvitation from './ReferenceInvitation.js';
 import VerifiedEmploymentModel from './VerifiedEmployment.js';
 import ProfileView from './ProfileView.js';
+import AuditLog from './AuditLog.js';
+import PrivacySetting from './PrivacySetting.js';
+import DataExport from './DataExport.js';
 
 // Initialize models that are factory functions
 const VerifiedEmployment = VerifiedEmploymentModel(sequelize);
@@ -167,6 +170,20 @@ User.hasMany(ProfileView, { foreignKey: 'candidate_id', as: 'profileViews' });
 ProfileView.belongsTo(User, { foreignKey: 'candidate_id', as: 'candidate' });
 ProfileView.belongsTo(User, { foreignKey: 'viewer_id', as: 'viewer' });
 
+// Audit Log associations
+User.hasMany(AuditLog, { foreignKey: 'user_id', as: 'auditLogs' });
+AuditLog.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+AuditLog.belongsTo(User, { foreignKey: 'target_user_id', as: 'targetUser' });
+
+// Privacy Setting associations
+User.hasMany(PrivacySetting, { foreignKey: 'user_id', as: 'privacySettings' });
+PrivacySetting.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+PrivacySetting.belongsTo(User, { foreignKey: 'created_by', as: 'creator' });
+
+// Data Export associations
+User.hasMany(DataExport, { foreignKey: 'user_id', as: 'dataExports' });
+DataExport.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+
 export {
   sequelize,
   User,
@@ -199,4 +216,7 @@ export {
   ReferenceInvitation,
   VerifiedEmployment,
   ProfileView,
+  AuditLog,
+  PrivacySetting,
+  DataExport,
 };

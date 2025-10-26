@@ -1,5 +1,7 @@
 import { Reference, ReferenceInvitation, User, ProfileView } from '../models/index.js';
+import { Op } from 'sequelize';
 import biasReductionService from '../services/biasReductionService.js';
+import AuditService from '../services/auditService.js';
 import crypto from 'crypto';
 import sgMail from '@sendgrid/mail';
 
@@ -53,6 +55,20 @@ const createReferenceInvitation = async (req, res) => {
       token,
       message,
       expires_at
+    });
+
+    // Log the reference submission
+    await AuditService.logReferenceActivity({
+      userId: candidate_id,
+      referenceId: invitation.id,
+      actionType: 'reference_submission',
+      description: `Submitted reference request to ${reviewer_name} (${reviewer_email})`,
+      metadata: {
+        referrerName: reviewer_name,
+        referrerEmail: reviewer_email,
+        message: message,
+        expiresAt: expires_at
+      }
     });
 
     // Send email invitation
@@ -520,23 +536,59 @@ const toggleReferenceOutdated = async (req, res) => {
     const { is_outdated } = req.body;
     const candidate_id = req.user.id;
 
-    const reference = await Reference.findOne({
-      where: { id, candidate_id, status: 'completed' }
+    console.log('Toggle reference outdated request:', { id, is_outdated, candidate_id });
+
+    // First find the reference invitation
+    const invitation = await ReferenceInvitation.findOne({
+      where: { 
+        id: parseInt(id),
+        candidate_id: candidate_id 
+      },
+      include: [{
+        model: Reference,
+        as: 'reference',
+        required: false
+      }]
     });
 
-    if (!reference) {
+    if (!invitation) {
       return res.status(404).json({
         success: false,
-        message: 'Reference not found or not completed'
+        message: 'Reference invitation not found'
       });
     }
 
-    await reference.update({ is_outdated });
+    if (invitation.status !== 'completed' || !invitation.reference) {
+      return res.status(400).json({
+        success: false,
+        message: 'Reference not completed yet'
+      });
+    }
+
+    // Update the associated reference
+    await invitation.reference.update({ is_outdated });
+
+    // Log the reference visibility change
+    await AuditService.logReferenceActivity({
+      userId: candidate_id,
+      referenceId: invitation.id,
+      actionType: 'reference_outdated_toggle',
+      description: `Marked reference as ${is_outdated ? 'outdated' : 'current'}`,
+      metadata: {
+        referrerName: invitation.referrer_name,
+        referrerEmail: invitation.reviewer_email,
+        isOutdated: is_outdated,
+        previousStatus: !is_outdated
+      }
+    });
 
     res.json({
       success: true,
       message: `Reference marked as ${is_outdated ? 'outdated' : 'current'}`,
-      data: reference
+      data: {
+        id: invitation.id,
+        isOutdated: is_outdated
+      }
     });
 
   } catch (error) {
@@ -576,8 +628,8 @@ const logProfileView = async (req, res) => {
         candidate_id,
         viewer_id,
         viewed_at: {
-          [require('sequelize').Op.gte]: today,
-          [require('sequelize').Op.lt]: tomorrow
+          [Op.gte]: today,
+          [Op.lt]: tomorrow
         }
       }
     });

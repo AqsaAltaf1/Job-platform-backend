@@ -217,6 +217,18 @@ import {
   getDashboardStats as getCandidateDashboardStats,
   getTransparencyData
 } from './controllers/candidateDashboardController.js';
+import { toggleReferenceOutdated } from './controllers/referenceController.js';
+import {
+  getComprehensiveTransparencyData,
+  getAuditLog,
+  getActivityAnalytics,
+  getPrivacySettings,
+  updatePrivacySettings,
+  requestDataExport,
+  getDataExportHistory,
+  getReferenceActivityLog,
+  exportAuditData
+} from './controllers/transparencyController.js';
 
 import {
   getNotifications,
@@ -528,7 +540,19 @@ app.get('/api/candidate/references', authenticateToken, getReferences); // Get c
 app.get('/api/candidate/reference-templates', authenticateToken, getReferenceTemplates); // Get reference templates
 app.post('/api/candidate/references/request', authenticateToken, sendReferenceRequest); // Send reference request
 app.put('/api/candidate/references/:id/visibility', authenticateToken, toggleReferenceVisibility); // Toggle reference visibility
+app.put('/api/candidate/references/:id/outdated', authenticateToken, toggleReferenceOutdated); // Toggle reference outdated status
 app.delete('/api/candidate/references/:id', authenticateToken, removeReference); // Remove reference
+
+// Comprehensive Transparency Routes
+app.get('/api/candidate/transparency/comprehensive', authenticateToken, getComprehensiveTransparencyData); // Get comprehensive transparency data
+app.get('/api/candidate/transparency/audit-log', authenticateToken, getAuditLog); // Get detailed audit log
+app.get('/api/candidate/transparency/analytics', authenticateToken, getActivityAnalytics); // Get activity analytics
+app.get('/api/candidate/transparency/reference-activity', authenticateToken, getReferenceActivityLog); // Get reference activity log
+app.get('/api/candidate/transparency/export', authenticateToken, exportAuditData); // Export audit data
+app.get('/api/candidate/privacy-settings', authenticateToken, getPrivacySettings); // Get privacy settings
+app.put('/api/candidate/privacy-settings', authenticateToken, updatePrivacySettings); // Update privacy settings
+app.post('/api/candidate/data-export', authenticateToken, requestDataExport); // Request data export
+app.get('/api/candidate/data-export-history', authenticateToken, getDataExportHistory); // Get data export history
 
 // Notification Routes
 app.get('/api/notifications', authenticateToken, getNotifications); // Get user notifications

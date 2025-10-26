@@ -1,5 +1,6 @@
-import { User, CandidateProfile, Experience, Education, Project, CandidateRating, JobApplication, ProfileView, Notification } from '../models/index.js';
+import { User, CandidateProfile, Experience, Education, Project, CandidateRating, JobApplication, ProfileView, Notification, PrivacySetting } from '../models/index.js';
 import { Op } from 'sequelize';
+import AuditService from '../services/auditService.js';
 
 /**
  * Get all candidates with their basic information
@@ -14,6 +15,26 @@ export const getCandidates = async (req, res) => {
       role: 'candidate',
       is_active: true
     };
+
+    // Get privacy settings for all candidates to filter out private profiles
+    const privacySettings = await PrivacySetting.findAll({
+      where: {
+        setting_type: 'profile_visibility',
+        is_active: true
+      },
+      attributes: ['user_id', 'setting_value']
+    });
+
+    // Filter out candidates who have set their profile to private
+    const privateProfileUserIds = privacySettings
+      .filter(setting => !setting.setting_value?.public)
+      .map(setting => setting.user_id);
+
+    if (privateProfileUserIds.length > 0) {
+      whereConditions.id = {
+        [Op.notIn]: privateProfileUserIds
+      };
+    }
 
     // Search filter
     if (search) {
@@ -111,6 +132,24 @@ export const getCandidateProfile = async (req, res) => {
   try {
     const { id } = req.params;
 
+    // Check if candidate has set their profile to private (only for non-candidate users)
+    if (req.user.id !== id) {
+      const privacySetting = await PrivacySetting.findOne({
+        where: {
+          user_id: id,
+          setting_type: 'profile_visibility',
+          is_active: true
+        }
+      });
+
+      if (privacySetting && !privacySetting.setting_value?.public) {
+        return res.status(403).json({
+          success: false,
+          message: 'This candidate has set their profile to private'
+        });
+      }
+    }
+
     const candidate = await User.findOne({
       where: { 
         id: id,
@@ -153,46 +192,155 @@ export const getCandidateProfile = async (req, res) => {
       });
     }
 
+    // Apply privacy settings for non-candidate users
+    if (req.user.id !== id) {
+      // Check contact info sharing
+      const contactPrivacySetting = await PrivacySetting.findOne({
+        where: {
+          user_id: id,
+          setting_type: 'contact_info_sharing',
+          is_active: true
+        }
+      });
+
+      if (contactPrivacySetting && !contactPrivacySetting.setting_value?.enabled) {
+        // Remove contact details
+        if (candidate.email) candidate.email = '[Contact Restricted]';
+        if (candidate.candidateProfile?.phone) candidate.candidateProfile.phone = '[Contact Restricted]';
+      }
+
+      // Check anonymization level
+      const anonymizationSetting = await PrivacySetting.findOne({
+        where: {
+          user_id: id,
+          setting_type: 'anonymization_level',
+          is_active: true
+        }
+      });
+
+      if (anonymizationSetting) {
+        const level = anonymizationSetting.setting_value?.level || 'none';
+        
+        switch (level) {
+          case 'basic':
+            if (candidate.candidateProfile?.current_company) {
+              candidate.candidateProfile.current_company = '[Company Name Hidden]';
+            }
+            break;
+          case 'advanced':
+            if (candidate.candidateProfile?.current_company) {
+              candidate.candidateProfile.current_company = '[Company Name Hidden]';
+            }
+            if (candidate.candidateProfile?.location) {
+              candidate.candidateProfile.location = candidate.candidateProfile.location.split(',')[0] + ' Area';
+            }
+            break;
+          case 'maximum':
+            if (candidate.candidateProfile?.current_company) {
+              candidate.candidateProfile.current_company = '[Company Name Hidden]';
+            }
+            if (candidate.candidateProfile?.current_title) {
+              candidate.candidateProfile.current_title = '[Job Title Hidden]';
+            }
+            if (candidate.candidateProfile?.location) {
+              candidate.candidateProfile.location = '[Location Hidden]';
+            }
+            break;
+        }
+      }
+    }
+
     // Log profile view and create notification
     try {
       // Don't log views from the candidate themselves
       if (req.user.id !== id) {
-        await ProfileView.create({
-          candidate_id: id,
-          viewer_id: req.user.id,
-          viewer_type: req.user.role || 'employer',
-          viewer_email: req.user.email,
-          viewer_company: req.user.employerProfile?.company_name,
-          ip_address: req.ip || req.connection.remoteAddress,
-          user_agent: req.get('User-Agent')
+        // Check if we already logged a view from this viewer in the last 5 minutes
+        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+        const existingView = await ProfileView.findOne({
+          where: {
+            candidate_id: id,
+            viewer_id: req.user.id,
+            viewed_at: {
+              [Op.gte]: fiveMinutesAgo
+            }
+          }
         });
 
-        // Create notification for the candidate about profile view
-        try {
-          const viewerName = req.user.employerProfile?.company_name || req.user.email || 'An employer';
-          const companyName = req.user.employerProfile?.company_name || 'a company';
-          
-          await Notification.create({
-            user_id: id,
-            type: 'profile_view',
-            title: 'Profile Viewed',
-            message: `${viewerName} from ${companyName} viewed your profile.`,
-            data: {
-              viewerName,
-              companyName,
-              viewerType: req.user.role || 'employer',
-              type: 'profile_view'
-            },
-            is_read: false
+        if (!existingView) {
+          await ProfileView.create({
+            candidate_id: id,
+            viewer_id: req.user.id,
+            viewer_type: req.user.role || 'employer',
+            viewer_email: req.user.email,
+            viewer_company: req.user.employerProfile?.company_name,
+            ip_address: req.ip || req.connection.remoteAddress,
+            user_agent: req.get('User-Agent')
           });
-          console.log('✅ Profile view notification created for candidate:', id);
-        } catch (notificationError) {
-          console.error('❌ Error creating profile view notification:', notificationError);
-          // Don't fail the main request if notification creation fails
+
+          // Log profile view in audit log
+          await AuditService.logEvent({
+            userId: id,
+            actionType: 'profile_view',
+            actionCategory: 'profile',
+            description: `Profile viewed by ${req.user.email}`,
+            targetUserId: req.user.id,
+            metadata: {
+              viewerType: req.user.role || 'employer',
+              viewerEmail: req.user.email,
+              viewerCompany: req.user.employerProfile?.company_name
+            },
+            ipAddress: req.ip || req.connection.remoteAddress,
+            userAgent: req.get('User-Agent')
+          });
+
+          // Create notification for the candidate about profile view (with cooldown)
+          try {
+            // Check if we already created a notification for this viewer in the last 5 minutes
+            const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+            const existingNotification = await Notification.findOne({
+              where: {
+                user_id: id,
+                type: 'profile_view',
+                data: {
+                  viewerType: req.user.role || 'employer'
+                },
+                created_at: {
+                  [Op.gte]: fiveMinutesAgo
+                }
+              }
+            });
+
+            if (!existingNotification) {
+              const viewerName = req.user.employerProfile?.company_name || req.user.email || 'An employer';
+              const companyName = req.user.employerProfile?.company_name || 'a company';
+              
+              await Notification.create({
+                user_id: id,
+                type: 'profile_view',
+                title: 'Profile Viewed',
+                message: `${viewerName} from ${companyName} viewed your profile.`,
+                data: {
+                  viewerName,
+                  companyName,
+                  viewerType: req.user.role || 'employer',
+                  type: 'profile_view'
+                },
+                is_read: false
+              });
+              console.log('✅ Profile view notification created for candidate:', id);
+            } else {
+              console.log('⏭️ Skipping duplicate profile view notification (within 5 minutes)');
+            }
+          } catch (notificationError) {
+            console.error('❌ Error creating profile view notification:', notificationError);
+            // Don't fail the main request if notification creation fails
+          }
+        } else {
+          console.log('⏭️ Skipping duplicate profile view (within 5 minutes)');
         }
       }
     } catch (viewError) {
-      console.log('Could not log profile view (likely duplicate):', viewError.message);
+      console.log('Could not log profile view:', viewError.message);
     }
 
     // Get ratings for this candidate through job applications

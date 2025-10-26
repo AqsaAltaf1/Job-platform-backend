@@ -3,9 +3,9 @@ import { PeerEndorsement } from '../models/PeerEndorsement.js';
 import { ReviewerInvitation } from '../models/ReviewerInvitation.js';
 import ReferenceInvitation from '../models/ReferenceInvitation.js';
 import Reference from '../models/Reference.js';
+import { Op } from 'sequelize';
 import { CandidateProfile } from '../models/CandidateProfile.js';
 import User from '../models/User.js';
-import { Op } from 'sequelize';
 import { sendEmail } from '../utils/emailService.js';
 import crypto from 'crypto';
 
@@ -394,7 +394,7 @@ export const removeReference = async (req, res) => {
           user_id: candidateId,
           type: 'reference_completed',
           data: {
-            [require('sequelize').Op.contains]: {
+            [Op.contains]: {
               reviewer_name: invitation.reviewer_name,
               reviewer_email: invitation.reviewer_email
             }
