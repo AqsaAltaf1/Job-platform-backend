@@ -206,6 +206,7 @@ export const authenticateWithGoogle = async (req, res) => {
       // User doesn't exist, create new account
       const newUser = await User.create({
         email: googleProfile.email,
+        password_hash: 'oauth_user_no_password', // Placeholder for OAuth users
         first_name: googleProfile.given_name || '',
         last_name: googleProfile.family_name || '',
         google_id: googleProfile.id,

@@ -19,6 +19,7 @@ const User = sequelize.define('User', {
   password_hash: {
     type: DataTypes.STRING,
     allowNull: false,
+    defaultValue: 'oauth_user_no_password', // Placeholder for OAuth users
   },
   role: {
     type: DataTypes.ENUM('super_admin', 'employer', 'candidate', 'team_member'),
@@ -87,6 +88,10 @@ const User = sequelize.define('User', {
 
 // Instance method to check password
 User.prototype.checkPassword = async function(password) {
+  // OAuth users have placeholder password - they can't use password login
+  if (this.password_hash === 'oauth_user_no_password') {
+    return false;
+  }
   return await bcrypt.compare(password, this.password_hash);
 };
 
