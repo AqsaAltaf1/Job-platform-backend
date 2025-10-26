@@ -215,6 +215,30 @@ export const authenticateWithGoogle = async (req, res) => {
         role: 'candidate' // Default role for new users
       });
 
+      // Create appropriate profile based on user role (like regular registration)
+      const { EmployerProfile, CandidateProfile } = await import('../models/index.js');
+      let profile = null;
+      
+      if (newUser.role === 'employer') {
+        profile = await EmployerProfile.create({
+          user_id: newUser.id,
+          email: newUser.email,
+          first_name: newUser.first_name,
+          last_name: newUser.last_name,
+          phone: null,
+          // All other fields will be null initially
+        });
+      } else if (newUser.role === 'candidate') {
+        profile = await CandidateProfile.create({
+          user_id: newUser.id,
+          email: newUser.email,
+          first_name: newUser.first_name,
+          last_name: newUser.last_name,
+          phone: null,
+          // All other fields will be null initially
+        });
+      }
+
       // Generate JWT token
       const token = jwt.sign(
         { id: newUser.id, email: newUser.email, role: newUser.role },
@@ -222,8 +246,7 @@ export const authenticateWithGoogle = async (req, res) => {
         { expiresIn: '24h' }
       );
 
-      // Get user with profiles (will be empty for new user)
-      const { EmployerProfile, CandidateProfile } = await import('../models/index.js');
+      // Get user with profiles (now includes the newly created profile)
       const userWithProfiles = await User.findByPk(newUser.id, {
         include: [
           { model: EmployerProfile, as: 'employerProfile', required: false },
